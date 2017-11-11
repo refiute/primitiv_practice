@@ -21,7 +21,7 @@ class EncoderDecoder(object):
         self.dropout_rate_ = dropout_rate
         self.psrc_lookup_ = Parameter([embed_size, src_vocab_size], I.XavierUniform())
         self.ptrg_lookup_ = Parameter([embed_size, trg_vocab_size], I.XavierUniform())
-        self.pwfbw_ = Parameter([hidden_size, 2*hidden_size], I.XavierUniform())
+        self.pwfbw_ = Parameter([2*hidden_size, hidden_size], I.XavierUniform())
         self.pwhw_ = Parameter([hidden_size, hidden_size], I.XavierUniform())
         self.pwwe_ = Parameter([hidden_size], I.XavierUniform())
         self.pwhj_ = Parameter([embed_size, hidden_size], I.XavierUniform())
@@ -116,6 +116,7 @@ class EncoderDecoder(object):
         # Concatenates RNN states.
         self.fb_list = [F.concat([f_list[i], b_list[i]], 0) for i in range(len(src_batch))]
         self.concat_fb = F.concat(self.fb_list, 1)
+        self.t_concat_fb = F.transpose(self.concat_fb)
 
         # Initializes decode states.
         self.wfbw_ = F.parameter(self.pwfbw_)
@@ -130,16 +131,10 @@ class EncoderDecoder(object):
 
     # One step decoding.
     def decode_step(self, trg_words, train):
-        batch_size = len(trg_words)
-
-        e_list = []
         b = self.whw_ @ self.trg_lstm_.get_h()
-        for fb in self.fb_list:
-            e = self.wfbw_ @ fb + b
-            e_list.append(e)
-        x = F.tanh(F.concat(e_list, 1))
-        x = F.transpose(x) @ self.wwe_
-        atten_prob = F.softmax(x, 0)
+        b = F.transpose(F.broadcast(b, 1, len(self.fb_list)))
+        x = F.tanh(self.t_concat_fb @ self.wfbw_ + b)
+        atten_prob = F.softmax(x @ self.wwe_, 0)
         c = self.concat_fb @ atten_prob
 
         e = F.pick(self.trg_lookup_, trg_words, 1)

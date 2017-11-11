@@ -29,7 +29,6 @@ BATCH_SIZE = 64
 MAX_EPOCH = 30
 GENERATION_LIMIT = 32
 DROPOUT_RATE = 0.5
-
 SRC_TRAIN_FILE = "data/train.en"
 TRG_TRAIN_FILE = "data/train.ja"
 SRC_VALID_FILE = "data/dev.en"
