@@ -40,6 +40,20 @@ def line_to_sent(line, vocab):
 def load_corpus(path, vocab):
     return [line_to_sent(line, vocab) for line in open(path)]
 
+# Generates word ID list from a reference sentence.
+def line_to_sent_ref(line, vocab):
+    # NOTE(odashi):
+    # -1 never becomes a word ID of any specific words and this is useful to
+    # prevent BLEU contamination.
+    unk_id = -1
+    converted = "<bos> " + line + " <eos>"
+    return [vocab.get(word, unk_id) for word in converted.split()]
+
+# Generates word ID list from a reference corpus.
+# All out-of-vocab words are replaced to -1.
+def load_corpus_ref(path, vocab):
+    return [line_to_sent_ref(line, vocab) for line in open(path)]
+
 # Counts output labels in the corpus.
 def count_labels(corpus):
     ret = 0
@@ -65,24 +79,15 @@ def count_labels(corpus):
 #     {<eos>,    w4, <eos>, <eos>},
 #     {<eos>, <eos>, <eos>, <eos>},
 #   }
-def make_batch(corpus, sent_ids, vocab, offset=0):
+def make_batch(corpus, sent_ids, vocab):
     batch_size = len(sent_ids)
     eos_id = vocab["<eos>"]
-    max_len = 2
-    for i in range(len(sent_ids)):
-        sent_ids[i] += offset
-
+    max_len = 0
     for sid in sent_ids:
-        if sid < 0 or sid >= len(corpus):
-            continue
         max_len = max(max_len, len(corpus[sid]))
     batch = [[eos_id] * batch_size for i in range(max_len)]
     for i in range(batch_size):
-        sid = sent_ids[i]
-        if 0 <= sid < len(corpus):
-            sent = corpus[sent_ids[i]]
-        else:
-            sent = [vocab["<bos>"], eos_id]
+        sent = corpus[sent_ids[i]]
         for j in range(len(sent)):
             batch[j][i] = sent[j]
     return batch
@@ -98,14 +103,3 @@ def save_ppl(path, ppl):
 def load_ppl(path):
     with open(path, "r") as ifs:
         return float(ifs.readline());
-
-
-# Finds a word ID with the highest logit.
-def argmax(logits):
-    ret = 0
-    best = -1e10
-    for i in range(len(logits)):
-        if logits[i] > best:
-            ret = i
-            best = logits[i]
-    return ret

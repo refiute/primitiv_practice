@@ -8,6 +8,8 @@ import math
 from argparse import ArgumentParser
 from collections import defaultdict
 
+import numpy as np
+
 from primitiv import Device, Parameter, Graph, Optimizer
 from primitiv import devices as D
 from primitiv import operators as F
@@ -15,8 +17,8 @@ from primitiv import initializers as I
 from primitiv import optimizers as O
 
 from utils import (
-    make_vocab, load_corpus, count_labels, make_batch,
-    save_ppl, make_inv_vocab, line_to_sent, argmax, load_ppl
+    make_vocab, load_corpus, load_corpus_ref, count_labels, make_batch,
+    save_ppl, make_inv_vocab, line_to_sent, load_ppl
 )
 from bleu import get_bleu_stats, calculate_bleu
 from bahdanau_encdec import EncoderDecoder
@@ -34,7 +36,7 @@ TRG_TRAIN_FILE = "data/train.ja"
 SRC_VALID_FILE = "data/dev.en"
 TRG_VALID_FILE = "data/dev.ja"
 SRC_TEST_FILE = "data/test.en"
-TRG_TEST_FILE = "data/test.ja"
+REF_TEST_FILE = "data/test.ja"
 
 # Training encode decode model.
 def train(encdec, optimizer, prefix, best_valid_ppl):
@@ -56,8 +58,11 @@ def train(encdec, optimizer, prefix, best_valid_ppl):
     train_trg_corpus = load_corpus(TRG_TRAIN_FILE, trg_vocab)
     valid_src_corpus = load_corpus(SRC_VALID_FILE, src_vocab)
     valid_trg_corpus = load_corpus(TRG_VALID_FILE, trg_vocab)
+    test_src_corpus = load_corpus(SRC_TEST_FILE, src_vocab)
+    test_ref_corpus = load_corpus_ref(REF_TEST_FILE, trg_vocab)
     num_train_sents = len(train_trg_corpus)
     num_valid_sents = len(valid_trg_corpus)
+    num_test_sents = len(test_ref_corpus)
     num_train_labels = count_labels(train_trg_corpus)
     num_valid_labels = count_labels(valid_trg_corpus)
     print("train:", num_train_sents, "sentences,", num_train_labels, "labels")
@@ -121,14 +126,16 @@ def train(encdec, optimizer, prefix, best_valid_ppl):
 
         # Calculates test BLEU.
         stats = defaultdict(int)
-        with open(SRC_TEST_FILE) as fp_src, open(TRG_TEST_FILE) as fp_trg:
-            for ofs, (test_src, test_ref) in enumerate(zip(fp_src, fp_trg)):
-                print("%d" % ofs, end="\r")
-                sys.stdout.flush()
+        for ofs in range(0, num_test_sents, BATCH_SIZE):
+            print("%d" % ofs, end="\r")
+            sys.stdout.flush()
 
-                hyp_ids = test_one(encdec, src_vocab, trg_vocab, test_src)
-                hyp = [inv_trg_vocab[wid] for wid in hyp_ids]
-                for k, v in get_bleu_stats(test_ref.split(), hyp).items():
+            src_batch = test_src_corpus[ofs:min(ofs + BATCH_SIZE, num_test_sents)]
+            ref_batch = test_ref_corpus[ofs:min(ofs + BATCH_SIZE, num_test_sents)]
+
+            hyp_ids = test_batch(encdec, src_vocab, trg_vocab, src_batch)
+            for hyp_line, ref_line in zip(hyp_ids, ref_batch):
+                for k, v in get_bleu_stats(ref_line[1:-1], hyp_line).items():
                     stats[k] += v
 
         bleu = calculate_bleu(stats)
@@ -148,31 +155,26 @@ def train(encdec, optimizer, prefix, best_valid_ppl):
             new_scale = .7071 * optimizer.get_learning_rate_scaling()
             optimizer.set_learning_rate_scaling(new_scale)
 
-
-def test_one(encdec, src_vocab, trg_vocab, line):
+def test_batch(encdec, src_vocab, trg_vocab, lines):
     g = Graph()
     Graph.set_default(g)
 
-    src_corpus = [line_to_sent(line.strip(), src_vocab)]
-    src_batch = make_batch(src_corpus, [0], src_vocab)
-
+    src_batch = make_batch(lines, list(range(len(lines))), src_vocab)
     encdec.encode(src_batch, False)
 
-    # Generates target words one-by-one.
-    trg_ids = [trg_vocab["<bos>"]]
+    trg_ids = [np.array([trg_vocab["<bos>"]] * len(lines))]
     eos_id = trg_vocab["<eos>"]
-    while trg_ids[-1] != eos_id:
-        if len(trg_ids) > GENERATION_LIMIT+1:
-            print("Warning: Sentence generation did not finish in",
-                    GENERATION_LIMIT, "iterations.", file=sys.stderr)
-            trg_ids.append(eos_id)
+    eos_ids = np.array([eos_id] * len(lines))
+    while (trg_ids[-1] != eos_ids).any():
+        if len(trg_ids) > GENERATION_LIMIT + 1:
+            print("Warning: Sentence generation did not finish in", GENERATION_LIMIT,
+                  "iterations.", file=sys.stderr)
+            trg_ids.append(eos_ids)
             break
-        y = encdec.decode_step([trg_ids[-1]], False)
-        logits = y.to_list()
-        trg_ids.append(argmax(logits))
+        y = encdec.decode_step(trg_ids[-1], False)
+        trg_ids.append(np.array(y.argmax(0)).T)
 
-    return trg_ids[1:-1]
-
+    return [hyp[:np.where(hyp == eos_id)[0][0]] for hyp in np.array(trg_ids[1:]).T]
 
 # Generates translation by consuming stdin.
 def test(encdec):
@@ -182,10 +184,10 @@ def test(encdec):
     inv_trg_vocab = make_inv_vocab(trg_vocab)
 
     for line in sys.stdin:
-        trg_ids = test_one(encdec, src_vocab, trg_vocab, line)
+        sent = [line_to_sent(line.strip(), src_vocab)]
+        trg_ids = test_batch(encdec, src_vocab, trg_vocab, sent)[0]
         # Prints the result.
         print(" ".join(inv_trg_vocab[wid] for wid in trg_ids))
-
 
 def main():
     parser = ArgumentParser()
