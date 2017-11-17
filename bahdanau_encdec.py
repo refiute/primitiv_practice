@@ -1,91 +1,57 @@
 #!/usr/bin/env python3
 # coding: utf-8
 
-import sys
-import random
-import math
-
-from primitiv import Device, Parameter, Graph, Trainer
-from primitiv import devices as D
+from primitiv import Parameter, Model
 from primitiv import operators as F
 from primitiv import initializers as I
-from primitiv import trainers as T
 
 from lstm import LSTM
 
-class EncoderDecoder(object):
-    def __init__(self, name, src_vocab_size, trg_vocab_size, embed_size, hidden_size, dropout_rate):
-        self.name_ = name
-        self.embed_size_ = embed_size
-        self.hidden_size_ = hidden_size
+class EncoderDecoder(Model):
+    def __init__(self, dropout_rate):
+        super().__init__()
+
         self.dropout_rate_ = dropout_rate
-        self.psrc_lookup_ = Parameter([embed_size, src_vocab_size], I.XavierUniform())
-        self.ptrg_lookup_ = Parameter([embed_size, trg_vocab_size], I.XavierUniform())
-        self.pwfbw_ = Parameter([2*hidden_size, hidden_size], I.XavierUniform())
-        self.pwhw_ = Parameter([hidden_size, hidden_size], I.XavierUniform())
-        self.pwwe_ = Parameter([hidden_size], I.XavierUniform())
-        self.pwhj_ = Parameter([embed_size, hidden_size], I.XavierUniform())
-        self.pbj_ = Parameter([embed_size], I.Constant(0))
-        self.pwjy_ = Parameter([trg_vocab_size, embed_size], I.XavierUniform())
-        self.pby_ = Parameter([trg_vocab_size], I.Constant(0))
-        self.src_fw_lstm_ = LSTM(name+"_src_fw_lstm", embed_size, hidden_size)
-        self.src_bw_lstm_ = LSTM(name+"_src_bw_lstm", embed_size, hidden_size)
-        self.trg_lstm_ = LSTM(name+"_trg_lstm", embed_size+hidden_size*2, hidden_size)
 
-    # Loads all parameters.
-    @staticmethod
-    def load(name, prefix):
-        encdec = EncoderDecoder.__new__(EncoderDecoder)
-        encdec.name_ = name
-        encdec.psrc_lookup_ = Parameter.load(prefix+name+"_src_lookup.param")
-        encdec.ptrg_lookup_ = Parameter.load(prefix+name+"_trg_lookup.param")
-        encdec.pwfbw_ = Parameter.load(prefix+name+"_wfbw.param")
-        encdec.pwhw_ = Parameter.load(prefix+name+"_whw.param")
-        encdec.pwwe_ = Parameter.load(prefix+name+"_wwe.param")
-        encdec.pwhj_ = Parameter.load(prefix+name+"_whj.param")
-        encdec.pbj_ = Parameter.load(prefix+name+"_bj.param")
-        encdec.pwjy_ = Parameter.load(prefix+name+"_wjy.param")
-        encdec.pby_ = Parameter.load(prefix+name+"_by.param")
-        encdec.src_fw_lstm_ = LSTM.load(name+"_src_fw_lstm", prefix)
-        encdec.src_bw_lstm_ = LSTM.load(name+"_src_bw_lstm", prefix)
-        encdec.trg_lstm_ = LSTM.load(name+"_trg_lstm", prefix)
-        encdec.embed_size_ = encdec.pbj_.shape()[0]
-        encdec.hidden_size_ = encdec.pwhw_.shape()[0]
-        with open(prefix+name+".config", "r", encoding="utf-8") as f:
-            encdec.dropout_rate_ = float(f.readline())
-        return encdec
+        self.psrc_lookup_ = Parameter()
+        self.ptrg_lookup_ = Parameter()
+        self.pwfbw_ = Parameter()
+        self.pwhw_ = Parameter()
+        self.pwwe_ = Parameter()
+        self.pwhj_ = Parameter()
+        self.pbj_ = Parameter()
+        self.pwjy_ = Parameter()
+        self.pby_ = Parameter()
+        self.src_fw_lstm_ = LSTM()
+        self.src_bw_lstm_ = LSTM()
+        self.trg_lstm_ = LSTM()
 
-    # Saves all parameters
-    def save(self, prefix):
-        self.psrc_lookup_.save(prefix+self.name_+"_src_lookup.param")
-        self.ptrg_lookup_.save(prefix+self.name_+"_trg_lookup.param")
-        self.pwfbw_.save(prefix+self.name_+"_wfbw.param")
-        self.pwhw_.save(prefix+self.name_+"_whw.param")
-        self.pwwe_.save(prefix+self.name_+"_wwe.param")
-        self.pwhj_.save(prefix+self.name_+"_whj.param")
-        self.pbj_.save(prefix+self.name_+"_bj.param")
-        self.pwjy_.save(prefix+self.name_+"_wjy.param")
-        self.pby_.save(prefix+self.name_+"_by.param")
-        self.src_fw_lstm_.save(prefix)
-        self.src_bw_lstm_.save(prefix)
-        self.trg_lstm_.save(prefix)
-        with open(prefix+self.name_+".config", "w", encoding="utf-8") as f:
-            print(self.dropout_rate_, file=f)
+        self.add_parameter("src_lookup", self.psrc_lookup_)
+        self.add_parameter("trg_lookup", self.ptrg_lookup_)
+        self.add_parameter("wfbw", self.pwfbw_)
+        self.add_parameter("whw", self.pwhw_)
+        self.add_parameter("wwe", self.pwwe_)
+        self.add_parameter("whj", self.pwhj_)
+        self.add_parameter("bj", self.pbj_)
+        self.add_parameter("wjy", self.pwjy_)
+        self.add_parameter("by", self.pby_)
+        self.add_submodel("src_fw_lstm", self.src_fw_lstm_)
+        self.add_submodel("src_bw_lstm", self.src_bw_lstm_)
+        self.add_submodel("trg_lstm_", self.trg_lstm_)
 
-    # Adds parameters to the trainer
-    def register_training(self, trainer):
-        trainer.add_parameter(self.psrc_lookup_)
-        trainer.add_parameter(self.ptrg_lookup_)
-        trainer.add_parameter(self.pwfbw_)
-        trainer.add_parameter(self.pwhw_)
-        trainer.add_parameter(self.pwwe_)
-        trainer.add_parameter(self.pwhj_)
-        trainer.add_parameter(self.pbj_)
-        trainer.add_parameter(self.pwjy_)
-        trainer.add_parameter(self.pby_)
-        self.src_fw_lstm_.register_training(trainer)
-        self.src_bw_lstm_.register_training(trainer)
-        self.trg_lstm_.register_training(trainer)
+    def init(self, src_vocab_size, trg_vocab_size, embed_size, hidden_size):
+        self.psrc_lookup_.init([embed_size, src_vocab_size], I.XavierUniform())
+        self.ptrg_lookup_.init([embed_size, trg_vocab_size], I.XavierUniform())
+        self.pwfbw_.init([2*hidden_size, hidden_size], I.XavierUniform())
+        self.pwhw_.init([hidden_size, hidden_size], I.XavierUniform())
+        self.pwwe_.init([hidden_size], I.XavierUniform())
+        self.pwhj_.init([embed_size, hidden_size], I.XavierUniform())
+        self.pbj_.init([embed_size], I.Constant(0))
+        self.pwjy_.init([trg_vocab_size, embed_size], I.XavierUniform())
+        self.pby_.init([trg_vocab_size], I.Constant(0))
+        self.src_fw_lstm_.init(embed_size, hidden_size)
+        self.src_bw_lstm_.init(embed_size, hidden_size)
+        self.trg_lstm_.init(embed_size+hidden_size*2, hidden_size)
 
     def encode(self, src_batch, train):
         # Embedding lookup.
@@ -97,7 +63,7 @@ class EncoderDecoder(object):
             e_list.append(e)
 
         # Forward encoding
-        self.src_fw_lstm_.init()
+        self.src_fw_lstm_.reset()
         f_list = []
         for e in e_list:
             f = self.src_fw_lstm_.forward(e)
@@ -105,7 +71,7 @@ class EncoderDecoder(object):
             f_list.append(f)
 
         # Backward encoding
-        self.src_bw_lstm_.init()
+        self.src_bw_lstm_.reset()
         b_list = []
         for e in reversed(e_list):
             b = self.src_bw_lstm_.forward(e)
@@ -127,7 +93,7 @@ class EncoderDecoder(object):
         self.bj_ = F.parameter(self.pbj_)
         self.wjy_ = F.parameter(self.pwjy_)
         self.by_ = F.parameter(self.pby_)
-        self.trg_lstm_.init()
+        self.trg_lstm_.reset()
 
     # One step decoding.
     def decode_step(self, trg_words, train):

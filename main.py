@@ -8,11 +8,11 @@ import math
 from argparse import ArgumentParser
 from collections import defaultdict
 
-from primitiv import Device, Parameter, Graph, Trainer
+from primitiv import Device, Parameter, Graph, Optimizer
 from primitiv import devices as D
 from primitiv import operators as F
 from primitiv import initializers as I
-from primitiv import trainers as T
+from primitiv import optimizers as O
 
 from utils import (
     make_vocab, load_corpus, count_labels, make_batch,
@@ -37,9 +37,12 @@ SRC_TEST_FILE = "data/test.en"
 TRG_TEST_FILE = "data/test.ja"
 
 # Training encode decode model.
-def train(encdec, trainer, prefix, best_valid_ppl):
-    # Registers all parameters to the trainer.
-    encdec.register_training(trainer)
+def train(encdec, optimizer, prefix, best_valid_ppl):
+    # Registers all parameters to the optimizer.
+
+    # optimizer.add_model(encdec)
+    for param in encdec.get_trainable_parameters().values():
+        optimizer.add_parameter(param)
 
     # Loads vocab.
     src_vocab = make_vocab(SRC_TRAIN_FILE, SRC_VOCAB_SIZE)
@@ -71,7 +74,7 @@ def train(encdec, trainer, prefix, best_valid_ppl):
         Graph.set_default(g)
 
         print("epoch %d/%d:" % (epoch + 1, MAX_EPOCH))
-        print("  learning rate scale = %.4e" % trainer.get_learning_rate_scaling())
+        print("  learning rate scale = %.4e" % optimizer.get_learning_rate_scaling())
 
         # Shuffles train sentence IDs.
         random.shuffle(train_ids)
@@ -91,9 +94,9 @@ def train(encdec, trainer, prefix, best_valid_ppl):
             loss = encdec.loss(trg_batch, True)
             train_loss += loss.to_float() * len(batch_ids)
 
-            trainer.reset_gradients()
+            optimizer.reset_gradients()
             loss.backward()
-            trainer.update()
+            optimizer.update()
 
         train_ppl = math.exp(train_loss / num_train_labels)
         print("  train PPL = %.4f" % train_ppl)
@@ -131,19 +134,19 @@ def train(encdec, trainer, prefix, best_valid_ppl):
         bleu = calculate_bleu(stats)
         print("  test BLEU = %.2f" % (100 * bleu))
 
-        # Saves best model/trainer.
+        # Saves best model/optimizer.
         if valid_ppl < best_valid_ppl:
             best_valid_ppl = valid_ppl
-            print("  saving model/trainer ... ", end="")
+            print("  saving model/optimizer ... ", end="")
             sys.stdout.flush()
-            encdec.save(prefix+".")
-            trainer.save(prefix+".trainer.config")
-            save_ppl(prefix+".valid_ppl.config", best_valid_ppl)
+            encdec.save(prefix+".model")
+            optimizer.save(prefix+".optimizer")
+            save_ppl(prefix+".valid_ppl", best_valid_ppl)
             print("done.")
         else:
             # Learning rate decay by 1/sqrt(2)
-            new_scale = .7071 * trainer.get_learning_rate_scaling()
-            trainer.set_learning_rate_scaling(new_scale)
+            new_scale = .7071 * optimizer.get_learning_rate_scaling()
+            optimizer.set_learning_rate_scaling(new_scale)
 
 
 def test_one(encdec, src_vocab, trg_vocab, line):
@@ -179,7 +182,7 @@ def test(encdec):
     inv_trg_vocab = make_inv_vocab(trg_vocab)
 
     for line in sys.stdin:
-        trg_ids = test_one(encdec, src_vocab, trg_vocab, inv_trg_vocab, line)
+        trg_ids = test_one(encdec, src_vocab, trg_vocab, line)
         # Prints the result.
         print(" ".join(inv_trg_vocab[wid] for wid in trg_ids))
 
@@ -208,24 +211,27 @@ def main():
     print("done.", file=sys.stderr)
 
     if mode == "train":
-        encdec = EncoderDecoder("encdec", SRC_VOCAB_SIZE, TRG_VOCAB_SIZE, NUM_EMBED_UNITS, NUM_HIDDEN_UNITS, DROPOUT_RATE)
-        trainer = T.Adam()
-        trainer.set_weight_decay(1e-6)
-        trainer.set_gradient_clipping(5)
-        train(encdec, trainer, prefix, 1e10)
+        encdec = EncoderDecoder(DROPOUT_RATE)
+        encdec.init(SRC_VOCAB_SIZE, TRG_VOCAB_SIZE, NUM_EMBED_UNITS, NUM_HIDDEN_UNITS)
+        optimizer = O.Adam()
+        optimizer.set_weight_decay(1e-6)
+        optimizer.set_gradient_clipping(5)
+        train(encdec, optimizer, prefix, 1e10)
     elif mode == "resume":
-        print("loading model/trainer ... ", end="", file=sys.stderr)
+        print("loading model/optimizer ... ", end="", file=sys.stderr)
         sys.stderr.flush()
-        encdec = EncoderDecoder.load("encdec", prefix+".")
-        trainer = T.Adam()
-        trainer.load(prefix + ".trainer.config")
-        valid_ppl = load_ppl(prefix + ".valid_ppl.config")
+        encdec = EncoderDecoder(DROPOUT_RATE)
+        encdec.load(prefix+".model")
+        optimizer = O.Adam()
+        optimizer.load(prefix + ".optimizer")
+        valid_ppl = load_ppl(prefix + ".valid_ppl")
         print("done.", file=sys.stderr)
-        train(encdec, trainer, prefix, valid_ppl)
+        train(encdec, optimizer, prefix, valid_ppl)
     else:
         print("loading model ... ", end="", file=sys.stderr)
         sys.stderr.flush()
-        encdec = EncoderDecoder.load("encdec", prefix+".")
+        encdec = EncoderDecoder(DROPOUT_RATE)
+        encdec.load(prefix+".model")
         print("done.", file=sys.stderr)
         test(encdec)
 
