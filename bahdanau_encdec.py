@@ -80,8 +80,8 @@ class EncoderDecoder(Model):
         b_list.reverse()
 
         # Concatenates RNN states.
-        self.fb_list = [F.concat([f_list[i], b_list[i]], 0) for i in range(len(src_batch))]
-        self.concat_fb = F.concat(self.fb_list, 1)
+        fb_list = [F.concat([f_list[i], b_list[i]], 0) for i in range(len(src_batch))]
+        self.concat_fb = F.concat(fb_list, 1)
         self.t_concat_fb = F.transpose(self.concat_fb)
 
         # Initializes decode states.
@@ -97,9 +97,11 @@ class EncoderDecoder(Model):
 
     # One step decoding.
     def decode_step(self, trg_words, train):
+        sentence_len = self.concat_fb.shape()[1]
+
         b = self.whw_ @ self.trg_lstm_.get_h()
         b = F.reshape(b, Shape([1, b.shape()[0]]))
-        b = F.broadcast(b, 0, len(self.fb_list))
+        b = F.broadcast(b, 0, sentence_len)
         x = F.tanh(self.t_concat_fb @ self.wfbw_ + b)
         atten_prob = F.softmax(x @ self.wwe_, 0)
         c = self.concat_fb @ atten_prob
