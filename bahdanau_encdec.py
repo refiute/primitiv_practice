@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # coding: utf-8
 
-from primitiv import Parameter, Model
+from primitiv import Parameter, Model, Shape
 from primitiv import operators as F
 from primitiv import initializers as I
 
@@ -98,7 +98,8 @@ class EncoderDecoder(Model):
     # One step decoding.
     def decode_step(self, trg_words, train):
         b = self.whw_ @ self.trg_lstm_.get_h()
-        b = F.transpose(F.broadcast(b, 1, len(self.fb_list)))
+        b = F.reshape(b, Shape([1, b.shape()[0]]))
+        b = F.broadcast(b, 0, len(self.fb_list))
         x = F.tanh(self.t_concat_fb @ self.wfbw_ + b)
         atten_prob = F.softmax(x @ self.wwe_, 0)
         c = self.concat_fb @ atten_prob
