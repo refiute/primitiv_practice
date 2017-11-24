@@ -26,18 +26,9 @@ class EncoderDecoder(Model):
         self.src_bw_lstm_ = LSTM()
         self.trg_lstm_ = LSTM()
 
-        self.add_parameter("src_lookup", self.psrc_lookup_)
-        self.add_parameter("trg_lookup", self.ptrg_lookup_)
-        self.add_parameter("wfbw", self.pwfbw_)
-        self.add_parameter("whw", self.pwhw_)
-        self.add_parameter("wwe", self.pwwe_)
-        self.add_parameter("whj", self.pwhj_)
-        self.add_parameter("bj", self.pbj_)
-        self.add_parameter("wjy", self.pwjy_)
-        self.add_parameter("by", self.pby_)
-        self.add_submodel("src_fw_lstm", self.src_fw_lstm_)
-        self.add_submodel("src_bw_lstm", self.src_bw_lstm_)
-        self.add_submodel("trg_lstm_", self.trg_lstm_)
+        self.add_all_parameters()
+        self.add_all_submodels()
+
 
     def init(self, src_vocab_size, trg_vocab_size, embed_size, hidden_size):
         self.psrc_lookup_.init([embed_size, src_vocab_size], I.XavierUniform())

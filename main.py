@@ -23,32 +23,26 @@ from utils import (
 from bleu import get_bleu_stats, calculate_bleu
 from bahdanau_encdec import EncoderDecoder
 
-SRC_VOCAB_SIZE = 4000
-TRG_VOCAB_SIZE = 5000
-NUM_EMBED_UNITS = 512
-NUM_HIDDEN_UNITS = 512
-BATCH_SIZE = 64
-MAX_EPOCH = 30
-GENERATION_LIMIT = 32
-DROPOUT_RATE = 0.5
 SRC_TRAIN_FILE = "data/train.en"
 TRG_TRAIN_FILE = "data/train.ja"
 SRC_VALID_FILE = "data/dev.en"
 TRG_VALID_FILE = "data/dev.ja"
 SRC_TEST_FILE = "data/test.en"
 REF_TEST_FILE = "data/test.ja"
+DROPOUT_RATE = 0.5
 
 # Training encode decode model.
-def train(encdec, optimizer, prefix, best_valid_ppl):
-    # Registers all parameters to the optimizer.
+def train(encdec, optimizer, args, best_valid_ppl):
+    prefix = args.model
+    max_epoch = args.epoch
+    batch_size = args.minibatch
 
-    # optimizer.add_model(encdec)
-    for param in encdec.get_trainable_parameters().values():
-        optimizer.add_parameter(param)
+    # Registers all parameters to the optimizer.
+    optimizer.add_model(encdec)
 
     # Loads vocab.
-    src_vocab = make_vocab(SRC_TRAIN_FILE, SRC_VOCAB_SIZE)
-    trg_vocab = make_vocab(TRG_TRAIN_FILE, TRG_VOCAB_SIZE)
+    src_vocab = make_vocab(SRC_TRAIN_FILE, args.src_vocab)
+    trg_vocab = make_vocab(TRG_TRAIN_FILE, args.trg_vocab)
     inv_trg_vocab = make_inv_vocab(trg_vocab)
     print("#src_vocab:", len(src_vocab))
     print("#trg_vocab:", len(trg_vocab))
@@ -73,12 +67,12 @@ def train(encdec, optimizer, prefix, best_valid_ppl):
     valid_ids = list(range(num_valid_sents))
 
     # Train/valid loop.
-    for epoch in range(MAX_EPOCH):
+    for epoch in range(max_epoch):
         # Computation graph.
         g = Graph()
         Graph.set_default(g)
 
-        print("epoch %d/%d:" % (epoch + 1, MAX_EPOCH))
+        print("epoch %d/%d:" % (epoch + 1, max_epoch))
         print("  learning rate scale = %.4e" % optimizer.get_learning_rate_scaling())
 
         # Shuffles train sentence IDs.
@@ -86,11 +80,11 @@ def train(encdec, optimizer, prefix, best_valid_ppl):
 
         # Training.
         train_loss = 0.
-        for ofs in range(0, num_train_sents, BATCH_SIZE):
+        for ofs in range(0, num_train_sents, batch_size):
             print("%d" % ofs, end="\r")
             sys.stdout.flush()
 
-            batch_ids = train_ids[ofs:min(ofs+BATCH_SIZE, num_train_sents)]
+            batch_ids = train_ids[ofs:min(ofs+args.minibatch, num_train_sents)]
             src_batch = make_batch(train_src_corpus, batch_ids, src_vocab)
             trg_batch = make_batch(train_trg_corpus, batch_ids, trg_vocab)
 
@@ -108,11 +102,11 @@ def train(encdec, optimizer, prefix, best_valid_ppl):
 
         # Validation.
         valid_loss = 0.
-        for ofs in range(0, num_valid_sents, BATCH_SIZE):
+        for ofs in range(0, num_valid_sents, batch_size):
             print("%d" % ofs, end="\r")
             sys.stdout.flush()
 
-            batch_ids = valid_ids[ofs:min(ofs+BATCH_SIZE, num_valid_sents)]
+            batch_ids = valid_ids[ofs:min(ofs+batch_size, num_valid_sents)]
             src_batch = make_batch(valid_src_corpus, batch_ids, src_vocab)
             trg_batch = make_batch(valid_trg_corpus, batch_ids, trg_vocab)
 
@@ -126,14 +120,15 @@ def train(encdec, optimizer, prefix, best_valid_ppl):
 
         # Calculates test BLEU.
         stats = defaultdict(int)
-        for ofs in range(0, num_test_sents, BATCH_SIZE):
+        for ofs in range(0, num_test_sents, batch_size):
             print("%d" % ofs, end="\r")
             sys.stdout.flush()
 
-            src_batch = test_src_corpus[ofs:min(ofs + BATCH_SIZE, num_test_sents)]
-            ref_batch = test_ref_corpus[ofs:min(ofs + BATCH_SIZE, num_test_sents)]
+            src_batch = test_src_corpus[ofs:min(ofs + batch_size, num_test_sents)]
+            ref_batch = test_ref_corpus[ofs:min(ofs + batch_size, num_test_sents)]
 
-            hyp_ids = test_batch(encdec, src_vocab, trg_vocab, src_batch)
+            hyp_ids = test_batch(encdec, src_vocab, trg_vocab,
+                                 src_batch, args.generation_limit)
             for hyp_line, ref_line in zip(hyp_ids, ref_batch):
                 for k, v in get_bleu_stats(ref_line[1:-1], hyp_line).items():
                     stats[k] += v
@@ -155,7 +150,7 @@ def train(encdec, optimizer, prefix, best_valid_ppl):
             new_scale = .7071 * optimizer.get_learning_rate_scaling()
             optimizer.set_learning_rate_scaling(new_scale)
 
-def test_batch(encdec, src_vocab, trg_vocab, lines):
+def test_batch(encdec, src_vocab, trg_vocab, lines, generation_limit):
     g = Graph()
     Graph.set_default(g)
 
@@ -166,8 +161,8 @@ def test_batch(encdec, src_vocab, trg_vocab, lines):
     eos_id = trg_vocab["<eos>"]
     eos_ids = np.array([eos_id] * len(lines))
     while (trg_ids[-1] != eos_ids).any():
-        if len(trg_ids) > GENERATION_LIMIT + 1:
-            print("Warning: Sentence generation did not finish in", GENERATION_LIMIT,
+        if len(trg_ids) > generation_limit + 1:
+            print("Warning: Sentence generation did not finish in", generation_limit,
                   "iterations.", file=sys.stderr)
             trg_ids.append(eos_ids)
             break
@@ -177,48 +172,114 @@ def test_batch(encdec, src_vocab, trg_vocab, lines):
     return [hyp[:np.where(hyp == eos_id)[0][0]] for hyp in np.array(trg_ids[1:]).T]
 
 # Generates translation by consuming stdin.
-def test(encdec):
+def test(encdec, args):
     # Loads vocab.
-    src_vocab = make_vocab(SRC_TRAIN_FILE, SRC_VOCAB_SIZE)
-    trg_vocab = make_vocab(TRG_TRAIN_FILE, TRG_VOCAB_SIZE)
+    src_vocab = make_vocab(SRC_TRAIN_FILE, args.src_vocab)
+    trg_vocab = make_vocab(TRG_TRAIN_FILE, args.trg_vocab)
     inv_trg_vocab = make_inv_vocab(trg_vocab)
 
     for line in sys.stdin:
         sent = [line_to_sent(line.strip(), src_vocab)]
-        trg_ids = test_batch(encdec, src_vocab, trg_vocab, sent)[0]
+        trg_ids = test_batch(encdec, src_vocab, trg_vocab,
+                             sent, args.generation_limit)[0]
         # Prints the result.
         print(" ".join(inv_trg_vocab[wid] for wid in trg_ids))
 
-def main():
+
+def get_arguments():
+    src_vocab = 4000
+    trg_vocab = 5000
+    embed_size = 512
+    hidden_size = 512
+    epoch = 30
+    minibatch_size = 64
+    generation_limit = 32
+    dropout_rate = 0.5
+
     parser = ArgumentParser()
-    parser.add_argument("mode")
-    parser.add_argument("model_prefix")
+    parser.add_argument("mode", help="'train', 'resume', or 'test'")
+    parser.add_argument("model", help='model file prefix')
+    parser.add_argument("--use-gpu", action="store_true", default=False,
+                        help="use GPU device (default: False)")
+    parser.add_argument("--gpu-device", default=0, metavar='INT', type=int,
+                        help='GPU device ID to be used (default: %(default)d)')
+    parser.add_argument("--src-vocab", default=src_vocab, metavar='INT', type=int,
+                        help="source vocabulary size (default: %(default)d)")
+    parser.add_argument("--trg-vocab", default=trg_vocab, metavar='INT', type=int,
+                        help="target vocabulary size (default: %(default)d)")
+    parser.add_argument("--embed", default=embed_size, metavar='INT', type=int,
+                        help="embedding layer size (default: %(default)d)")
+    parser.add_argument("--hidden", default=hidden_size, metavar='INT', type=int,
+                        help="hidden layer size (default: %(default)d)")
+    parser.add_argument("--epoch", default=epoch, metavar='INT', type=int,
+                        help="number of training epoch (default: %(default)d)")
+    parser.add_argument("--minibatch", default=minibatch_size, metavar="INT", type=int,
+                        help="minibatch size (default: %(default)d)")
+    parser.add_argument("--generation-limit", default=generation_limit, metavar="INT", type=int,
+                        help="maximum number of words to be generated for test input (default: %(default)d)")
+
     args = parser.parse_args()
+    try:
+        if args.mode not in ("train", "resume", "test"):
+            raise ValueError("you must set mode = 'train', 'resume', or 'test'")
+        if args.use_gpu and args.gpu_device < 0:
+            raise ValueError("you must set --gpu-device >= 0")
+        if args.src_vocab < 1:
+            raise ValueError("you must set --src-vocab >= 1")
+        if args.trg_vocab < 1:
+            raise ValueError("you must set --trg-vocab >= 1")
+        if args.embed < 1:
+            raise ValueError("you must set --embed >= 1")
+        if args.hidden < 1:
+            raise ValueError("you must set --hidden >= 1")
+        if args.epoch < 1:
+            raise ValueError("you must set --epoch >= 1")
+        if args.minibatch < 1:
+            raise ValueError("you must set --minibatch >= 1")
+        if args.generation_limit < 1:
+            raise ValueError("you must set --generation-limit >= 1")
+    except Exception as ex:
+        parser.print_usage(file=sys.stderr)
+        print(ex, file=sys.stderr)
+        sys.exit()
 
-    mode = args.mode
-    prefix = args.model_prefix
-    print("mode:", mode, file=sys.stderr)
-    print("prefix:", prefix, file=sys.stderr)
+    print("mode =", args.model, file=sys.stderr)
+    print("model prefix =", args.model, file=sys.stderr)
+    if args.use_gpu:
+        print("device = GPU(device_id=%d)" % (args.gpu_device),
+              file=sys.stderr)
+    else:
+        print("device = Naive()", file=sys.stderr)
+    print("embed =", args.embed, file=sys.stderr)
+    print("hidden =", args.hidden, file=sys.stderr)
+    print("epoch =", args.epoch, file=sys.stderr)
+    print("minibatch size =", args.minibatch, file=sys.stderr)
+    print("generation limit =", args.generation_limit, file=sys.stderr)
 
-    if mode not in ("train", "resume", "test"):
-        print("unknown mode:", mode, file=sys.stderr)
-        return
+    return args
+
+def main():
+    args = get_arguments()
 
     print("initializing device ... ", end="", file=sys.stderr)
     sys.stderr.flush()
 
-    # dev = D.Naive()
-    dev = D.CUDA(0)
+    if args.use_gpu:
+        dev = D.CUDA(args.gpu_device)
+    else:
+        dev = D.Naive()
     Device.set_default(dev)
     print("done.", file=sys.stderr)
 
+    mode = args.mode
+    prefix = args.model
     if mode == "train":
         encdec = EncoderDecoder(DROPOUT_RATE)
-        encdec.init(SRC_VOCAB_SIZE, TRG_VOCAB_SIZE, NUM_EMBED_UNITS, NUM_HIDDEN_UNITS)
+        encdec.init(args.src_vocab, args.trg_vocab, args.embed, args.hidden)
         optimizer = O.Adam()
         optimizer.set_weight_decay(1e-6)
         optimizer.set_gradient_clipping(5)
-        train(encdec, optimizer, prefix, 1e10)
+        train(encdec, optimizer, args, 1e10)
     elif mode == "resume":
         print("loading model/optimizer ... ", end="", file=sys.stderr)
         sys.stderr.flush()
@@ -228,14 +289,14 @@ def main():
         optimizer.load(prefix + ".optimizer")
         valid_ppl = load_ppl(prefix + ".valid_ppl")
         print("done.", file=sys.stderr)
-        train(encdec, optimizer, prefix, valid_ppl)
+        train(encdec, optimizer, args, valid_ppl)
     else:
         print("loading model ... ", end="", file=sys.stderr)
         sys.stderr.flush()
         encdec = EncoderDecoder(DROPOUT_RATE)
         encdec.load(prefix+".model")
         print("done.", file=sys.stderr)
-        test(encdec)
+        test(encdec, args)
 
 if __name__ == "__main__":
     main()
