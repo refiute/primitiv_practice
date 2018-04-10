@@ -10,10 +10,8 @@ from collections import defaultdict
 
 import numpy as np
 
-from primitiv import Device, Parameter, Graph, Optimizer
+from primitiv import Device, Graph, Optimizer
 from primitiv import devices as D
-from primitiv import operators as F
-from primitiv import initializers as I
 from primitiv import optimizers as O
 
 from utils import (
@@ -29,7 +27,6 @@ SRC_VALID_FILE = "data/dev.en"
 TRG_VALID_FILE = "data/dev.ja"
 SRC_TEST_FILE = "data/test.en"
 REF_TEST_FILE = "data/test.ja"
-DROPOUT_RATE = 0.5
 
 # Training encode decode model.
 def train(encdec, optimizer, args, best_valid_ppl):
@@ -38,7 +35,7 @@ def train(encdec, optimizer, args, best_valid_ppl):
     batch_size = args.minibatch
 
     # Registers all parameters to the optimizer.
-    optimizer.add_model(encdec)
+    optimizer.add(encdec)
 
     # Loads vocab.
     src_vocab = make_vocab(SRC_TRAIN_FILE, args.src_vocab)
@@ -81,8 +78,7 @@ def train(encdec, optimizer, args, best_valid_ppl):
         # Training.
         train_loss = 0.
         for ofs in range(0, num_train_sents, batch_size):
-            print("%d" % ofs, end="\r")
-            sys.stdout.flush()
+            print("%d" % ofs, end="\r", flush=True)
 
             batch_ids = train_ids[ofs:min(ofs+args.minibatch, num_train_sents)]
             src_batch = make_batch(train_src_corpus, batch_ids, src_vocab)
@@ -103,8 +99,7 @@ def train(encdec, optimizer, args, best_valid_ppl):
         # Validation.
         valid_loss = 0.
         for ofs in range(0, num_valid_sents, batch_size):
-            print("%d" % ofs, end="\r")
-            sys.stdout.flush()
+            print("%d" % ofs, end="\r", flush=True)
 
             batch_ids = valid_ids[ofs:min(ofs+batch_size, num_valid_sents)]
             src_batch = make_batch(valid_src_corpus, batch_ids, src_vocab)
@@ -121,8 +116,7 @@ def train(encdec, optimizer, args, best_valid_ppl):
         # Calculates test BLEU.
         stats = defaultdict(int)
         for ofs in range(0, num_test_sents, batch_size):
-            print("%d" % ofs, end="\r")
-            sys.stdout.flush()
+            print("%d" % ofs, end="\r", flush=True)
 
             src_batch = test_src_corpus[ofs:min(ofs + batch_size, num_test_sents)]
             ref_batch = test_ref_corpus[ofs:min(ofs + batch_size, num_test_sents)]
@@ -139,8 +133,7 @@ def train(encdec, optimizer, args, best_valid_ppl):
         # Saves best model/optimizer.
         if valid_ppl < best_valid_ppl:
             best_valid_ppl = valid_ppl
-            print("  saving model/optimizer ... ", end="")
-            sys.stdout.flush()
+            print("  saving model/optimizer ... ", end="", flush=True)
             encdec.save(prefix+".model")
             optimizer.save(prefix+".optimizer")
             save_ppl(prefix+".valid_ppl", best_valid_ppl)
@@ -187,6 +180,7 @@ def test(encdec, args):
 
 
 def get_arguments():
+
     src_vocab = 4000
     trg_vocab = 5000
     embed_size = 512
@@ -194,15 +188,13 @@ def get_arguments():
     epoch = 30
     minibatch_size = 64
     generation_limit = 32
-    dropout_rate = 0.5
+    dropout = 0.5
 
     parser = ArgumentParser()
     parser.add_argument("mode", help="'train', 'resume', or 'test'")
     parser.add_argument("model", help='model file prefix')
-    parser.add_argument("--use-gpu", action="store_true", default=False,
-                        help="use GPU device (default: False)")
-    parser.add_argument("--gpu-device", default=0, metavar='INT', type=int,
-                        help='GPU device ID to be used (default: %(default)d)')
+    parser.add_argument("--gpu", default=-1, metavar='INT', type=int,
+                        help='GPU device ID to be used (default: %(default)d [use CPU])')
     parser.add_argument("--src-vocab", default=src_vocab, metavar='INT', type=int,
                         help="source vocabulary size (default: %(default)d)")
     parser.add_argument("--trg-vocab", default=trg_vocab, metavar='INT', type=int,
@@ -217,13 +209,14 @@ def get_arguments():
                         help="minibatch size (default: %(default)d)")
     parser.add_argument("--generation-limit", default=generation_limit, metavar="INT", type=int,
                         help="maximum number of words to be generated for test input (default: %(default)d)")
+    parser.add_argument("--dropout", default=dropout_rate, metavar="FLOAT", type=flaot, help="dropout rate")
 
     args = parser.parse_args()
     try:
         if args.mode not in ("train", "resume", "test"):
             raise ValueError("you must set mode = 'train', 'resume', or 'test'")
-        if args.use_gpu and args.gpu_device < 0:
-            raise ValueError("you must set --gpu-device >= 0")
+        if args.gpu < 0:
+            raise ValueError("you must set --gpu >= 0")
         if args.src_vocab < 1:
             raise ValueError("you must set --src-vocab >= 1")
         if args.trg_vocab < 1:
@@ -238,52 +231,38 @@ def get_arguments():
             raise ValueError("you must set --minibatch >= 1")
         if args.generation_limit < 1:
             raise ValueError("you must set --generation-limit >= 1")
+        if args.dropout < 0 or args.dropout > 1:
+            raise ValueError("you must set --dropout in [0, 1]")
     except Exception as ex:
         parser.print_usage(file=sys.stderr)
         print(ex, file=sys.stderr)
         sys.exit()
 
-    print("mode =", args.model, file=sys.stderr)
-    print("model prefix =", args.model, file=sys.stderr)
-    if args.use_gpu:
-        print("device = GPU(device_id=%d)" % (args.gpu_device),
-              file=sys.stderr)
-    else:
-        print("device = Naive()", file=sys.stderr)
-    print("embed =", args.embed, file=sys.stderr)
-    print("hidden =", args.hidden, file=sys.stderr)
-    print("epoch =", args.epoch, file=sys.stderr)
-    print("minibatch size =", args.minibatch, file=sys.stderr)
-    print("generation limit =", args.generation_limit, file=sys.stderr)
+    for (key, val) in vars(args).items():
+        print("%s: %s" % (key, val))
 
     return args
 
 def main():
     args = get_arguments()
 
-    print("initializing device ... ", end="", file=sys.stderr)
-    sys.stderr.flush()
-
-    if args.use_gpu:
-        dev = D.CUDA(args.gpu_device)
-    else:
-        dev = D.Naive()
+    print("initializing device ... ", end="", file=sys.stderr, flush=True)
+    dev = D.Naive() if args.gpu < 0 else D.CUDA(args.gpu)
     Device.set_default(dev)
     print("done.", file=sys.stderr)
 
     mode = args.mode
     prefix = args.model
     if mode == "train":
-        encdec = EncoderDecoder(DROPOUT_RATE)
+        encdec = EncoderDecoder(args.dropout)
         encdec.init(args.src_vocab, args.trg_vocab, args.embed, args.hidden)
         optimizer = O.Adam()
         optimizer.set_weight_decay(1e-6)
         optimizer.set_gradient_clipping(5)
         train(encdec, optimizer, args, 1e10)
     elif mode == "resume":
-        print("loading model/optimizer ... ", end="", file=sys.stderr)
-        sys.stderr.flush()
-        encdec = EncoderDecoder(DROPOUT_RATE)
+        print("loading model/optimizer ... ", end="", file=sys.stderr, flush=True)
+        encdec = EncoderDecoder(args.dropout)
         encdec.load(prefix+".model")
         optimizer = O.Adam()
         optimizer.load(prefix + ".optimizer")
@@ -291,9 +270,8 @@ def main():
         print("done.", file=sys.stderr)
         train(encdec, optimizer, args, valid_ppl)
     else:
-        print("loading model ... ", end="", file=sys.stderr)
-        sys.stderr.flush()
-        encdec = EncoderDecoder(DROPOUT_RATE)
+        print("loading model ... ", end="", file=sys.stderr, flush=True)
+        encdec = EncoderDecoder(args.dropout)
         encdec.load(prefix+".model")
         print("done.", file=sys.stderr)
         test(encdec, args)

@@ -2,15 +2,13 @@
 # coding: utf-8
 
 from primitiv import Parameter, Model, Shape
-from primitiv import operators as F
+from primitiv import functions as F
 from primitiv import initializers as I
 
 from lstm import LSTM
 
 class EncoderDecoder(Model):
     def __init__(self, dropout_rate):
-        super().__init__()
-
         self.dropout_rate_ = dropout_rate
 
         self.psrc_lookup_ = Parameter()
@@ -26,8 +24,7 @@ class EncoderDecoder(Model):
         self.src_bw_lstm_ = LSTM()
         self.trg_lstm_ = LSTM()
 
-        self.add_all_parameters()
-        self.add_all_submodels()
+        self.scan_attributes()
 
 
     def init(self, src_vocab_size, trg_vocab_size, embed_size, hidden_size):

@@ -10,7 +10,7 @@
 from primitiv import Model
 from primitiv import Node
 from primitiv import Parameter
-from primitiv import operators as F
+from primitiv import functions as F
 from primitiv import initializers as I
 
 
@@ -18,11 +18,10 @@ class LSTM(Model):
     """LSTM cell."""
 
     def __init__(self):
-        super().__init__()
-
-        self._pwxh = Parameter(); self.add_parameter("wxh", self._pwxh)
-        self._pwhh = Parameter(); self.add_parameter("whh", self._pwhh)
-        self._pbh = Parameter(); self.add_parameter("bh", self._pbh)
+        self._pwxh = Parameter();
+        self._pwhh = Parameter();
+        self._pbh = Parameter();
+        self.scan_attributes()
 
     def init(self, in_size, out_size):
         """Creates a new LSTM."""
